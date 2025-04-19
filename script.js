@@ -90,6 +90,7 @@ const countryNames = {
     'VN': 'Vietnam',
     'ID': 'Indonesia',
     'PH': 'Philippines',
+    'finland': { code: 'FI', name: 'Finland', nativeName: 'Suomi' },
 };
 
 function getCapitalCity(input) {
@@ -233,67 +234,85 @@ const commonCities = {
     'uk': ['London', 'Manchester', 'Birmingham', 'Glasgow', 'Liverpool']
 };
 
-// Add this new function to search cities using the API
-async function searchCities(query) {
+// First, let's add some debug logging to track what's happening
+async function searchLocations(query) {
     try {
-        const formattedQuery = query.trim().replace(' ', '%20');
-        // Use pro endpoint for geocoding
+        const formattedQuery = query.trim().toLowerCase();
+        console.log('Searching for:', formattedQuery); // Debug log
+        
+        // Use OpenWeatherMap's Geocoding API directly
         const response = await fetch(
-            `https://pro.openweathermap.org/geo/1.0/direct?q=${formattedQuery}&limit=5&appid=${API_KEY}`
+            `https://api.openweathermap.org/geo/1.0/direct?q=${formattedQuery}&limit=5&appid=${API_KEY}`
         );
         const data = await response.json();
-        
-        return data.map(city => ({
-            city: city.name,
-            state: city.state,
-            country: city.country,
-            lat: city.lat,
-            lon: city.lon
+        console.log('API response:', data); // Debug log
+
+        // Map the results
+        const results = data.map(location => ({
+            name: location.name,
+            state: location.state || '',
+            country: location.country,
+            lat: location.lat,
+            lon: location.lon,
+            displayName: location.state ? 
+                `${location.name}, ${location.state}, ${location.country}` : 
+                `${location.name}, ${location.country}`
         }));
+
+        console.log('Processed results:', results); // Debug log
+        return results;
+
     } catch (error) {
-        console.error('Error searching cities:', error);
+        console.error('Error searching locations:', error);
+        Analytics.trackFeatureUsage('search_error');
         return [];
     }
 }
 
+// Update showSuggestions function with better visibility handling
 function showSuggestions(suggestions) {
     const suggestionsBox = document.getElementById('suggestions');
+    
+    // Clear previous suggestions
     suggestionsBox.innerHTML = '';
     
-    if (suggestions.length === 0) {
+    console.log('Showing suggestions:', suggestions); // Debug log
+
+    if (!suggestions || suggestions.length === 0) {
         suggestionsBox.style.display = 'none';
         return;
     }
 
-    suggestions.forEach(({ city, state, country }) => {
+    // Create and append suggestion elements
+    suggestions.forEach(location => {
         const div = document.createElement('div');
         div.className = 'suggestion-item';
         
-        // Create location text with city, state (if available), and country
-        let locationText = city;
-        if (state) locationText += `, ${state}`;
-        locationText += `, ${country}`;
-        
         div.innerHTML = `
-            <span class="suggestion-city">${city}</span>
-            <span class="suggestion-country">${state ? `${state}, ` : ''}${country}</span>
+            <span class="suggestion-city">${location.name}</span>
+            <span class="suggestion-country">${location.state ? `${location.state}, ` : ''}${location.country}</span>
         `;
         
         div.onclick = () => {
-            cityInput.value = locationText;
+            cityInput.value = location.displayName;
             suggestionsBox.style.display = 'none';
-            handleSearch(locationText);
+            handleSearch(location.displayName);
+            Analytics.trackFeatureUsage('suggestion_selected');
         };
+        
         suggestionsBox.appendChild(div);
     });
 
+    // Ensure the suggestions box is visible
     suggestionsBox.style.display = 'block';
+    console.log('Suggestions box display style:', suggestionsBox.style.display); // Debug log
 }
 
-// Update the input event listener to use debouncing
+// Update the input event listener with better error handling
 let searchTimeout = null;
 cityInput.addEventListener('input', (e) => {
     const input = e.target.value.trim();
+    console.log('Input value:', input); // Debug log
     
     // Clear previous timeout
     if (searchTimeout) {
@@ -309,10 +328,19 @@ cityInput.addEventListener('input', (e) => {
     // Set new timeout to prevent too many API calls
     searchTimeout = setTimeout(async () => {
         showLoading();
-        const suggestions = await searchCities(input);
-        hideLoading();
-        showSuggestions(suggestions);
-    }, 300); // Wait 300ms after last keystroke before searching
+        try {
+            const suggestions = await searchLocations(input);
+            showSuggestions(suggestions);
+            if (suggestions.length > 0) {
+                Analytics.trackFeatureUsage('suggestions_shown');
+            }
+        } catch (error) {
+            console.error('Error fetching suggestions:', error);
+            Analytics.trackFeatureUsage('suggestions_error');
+        } finally {
+            hideLoading();
+        }
+    }, 300);
 });
 
 // Add click outside listener to close suggestions
@@ -388,44 +416,31 @@ document.addEventListener('DOMContentLoaded', function() {
     console.log('Initial tracking events fired'); // Debug log
 });
 
-// Update handleSearch function to ensure tracking
+// Update handleSearch function to handle the new location format
 async function handleSearch(cityQuery) {
     const city = cityQuery || cityInput.value.trim();
     if (!city) {
         showError('Please enter a city name');
-        Analytics.trackWeatherSearch(city, false); // Track failed search
+        Analytics.trackWeatherSearch(city, false);
         return;
     }
     
-    Analytics.trackWeatherSearch(city, true); // Track search attempt
+    Analytics.trackWeatherSearch(city, true);
     document.getElementById('suggestions').style.display = 'none';
     showLoading();
     
     try {
-        const capitalCity = getCapitalCity(city);
-        const searchCity = capitalCity || city;
-        
-        const weatherData = await fetchWeather(searchCity);
-        const forecastData = await fetchForecast(searchCity);
-        
-        if (capitalCity) {
-            const countryCode = weatherData.sys.country;
-            showNotification(`Showing weather for ${capitalCity}, ${countryCode}`);
-            // Track capital city selection
-            Analytics.trackFeatureUsage(`${capitalCity}, ${countryCode}`);
-        }
+        const weatherData = await fetchWeather(city);
+        const forecastData = await fetchForecast(city);
         
         updateWeatherUI(weatherData);
         updateForecastUI(forecastData);
         
-        localStorage.setItem('lastSuccessfulCity', searchCity);
-        
-        // Track successful weather fetch
+        localStorage.setItem('lastSuccessfulCity', city);
         Analytics.trackFeatureUsage('successful_fetch');
     } catch (error) {
         const lastSuccessfulCity = localStorage.getItem('lastSuccessfulCity') || 'Hong Kong';
         showError(`City "${city}" not found. Showing weather for ${lastSuccessfulCity}`);
-        // Track error
         Analytics.trackFeatureUsage('error');
         handleSearch(lastSuccessfulCity);
     } finally {

@@ -368,8 +368,8 @@ body {
     max-height: 300px;
     overflow-y: auto;
     z-index: 1000;
-    display: none;
     margin-top: 5px;
+    display: none;
 }
 
 .suggestion-item {
@@ -379,7 +379,6 @@ body {
     justify-content: space-between;
     align-items: center;
     border-bottom: 1px solid #eee;
-    transition: background-color 0.2s;
 }
 
 .suggestion-item:last-child {
@@ -398,7 +397,6 @@ body {
 .suggestion-country {
     color: #666;
     font-size: 0.9em;
-    text-align: right;
 }
 
 /* Add loading indicator for suggestions */
